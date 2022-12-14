@@ -11,56 +11,12 @@ setfenv(1, require'fs_common')
 
 local C = ffi.C
 
+require'waffi.windows.ntdll'
+require'waffi.windows.kernel32'
+
 assert(win, 'platform not Windows')
 
 --types, consts, utils -------------------------------------------------------
-
-if x64 then
-	cdef'typedef int64_t ULONG_PTR;'
-else
-	cdef'typedef int32_t ULONG_PTR;'
-end
-
-cdef[[
-typedef void           VOID, *PVOID, *LPVOID;
-typedef VOID*          HANDLE, *PHANDLE;
-typedef unsigned short WORD;
-typedef unsigned long  DWORD, *PDWORD, *LPDWORD;
-typedef unsigned int   UINT;
-typedef int            BOOL;
-typedef ULONG_PTR      SIZE_T;
-typedef const void*    LPCVOID;
-typedef char*          LPSTR;
-typedef const char*    LPCSTR;
-typedef wchar_t        WCHAR;
-typedef WCHAR*         LPWSTR;
-typedef const WCHAR*   LPCWSTR;
-typedef BOOL           *LPBOOL;
-typedef void*          HMODULE;
-typedef unsigned char  UCHAR;
-typedef unsigned short USHORT;
-typedef long           LONG;
-typedef unsigned long  ULONG;
-typedef long long      LONGLONG;
-
-typedef union {
-	struct {
-		DWORD LowPart;
-		LONG HighPart;
-	};
-	struct {
-		DWORD LowPart;
-		LONG HighPart;
-	} u;
-	LONGLONG QuadPart;
-} LARGE_INTEGER, *PLARGE_INTEGER;
-
-typedef struct {
-	DWORD  nLength;
-	LPVOID lpSecurityDescriptor;
-	BOOL   bInheritHandle;
-} SECURITY_ATTRIBUTES, *LPSECURITY_ATTRIBUTES;
-]]
 
 local INVALID_HANDLE_VALUE = ffi.cast('HANDLE', -1)
 
@@ -68,20 +24,6 @@ local wbuf = buffer'WCHAR[?]'
 local libuf = ffi.new'LARGE_INTEGER[1]'
 
 --error handling -------------------------------------------------------------
-
-cdef[[
-DWORD GetLastError(void);
-
-DWORD FormatMessageA(
-	DWORD dwFlags,
-	LPCVOID lpSource,
-	DWORD dwMessageId,
-	DWORD dwLanguageId,
-	LPSTR lpBuffer,
-	DWORD nSize,
-	va_list *Arguments
-);
-]]
 
 local FORMAT_MESSAGE_FROM_SYSTEM = 0x00001000
 
@@ -142,27 +84,6 @@ end
 
 --utf16/utf8 conversion ------------------------------------------------------
 
-cdef[[
-int MultiByteToWideChar(
-	UINT     CodePage,
-	DWORD    dwFlags,
-	LPCSTR   lpMultiByteStr,
-	int      cbMultiByte,
-	LPWSTR   lpWideCharStr,
-	int      cchWideChar
-);
-int WideCharToMultiByte(
-	UINT     CodePage,
-	DWORD    dwFlags,
-	LPCWSTR  lpWideCharStr,
-	int      cchWideChar,
-	LPSTR    lpMultiByteStr,
-	int      cbMultiByte,
-	LPCSTR   lpDefaultChar,
-	LPBOOL   lpUsedDefaultChar
-);
-]]
-
 local CP_UTF8 = 65001
 
 local wcsbuf = buffer'WCHAR[?]'
@@ -192,21 +113,6 @@ local function mbs(ws, wsz, mbuf) --WCHAR* -> string
 	assert(sz == msz) --should never happen otherwise
 	return ffi.string(buf, sz-1)
 end
-
---open/close -----------------------------------------------------------------
-
-cdef[[
-HANDLE CreateFileW(
-	LPCWSTR lpFileName,
-	DWORD dwDesiredAccess,
-	DWORD dwShareMode,
-	LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-	DWORD dwCreationDisposition,
-	DWORD dwFlagsAndAttributes,
-	HANDLE hTemplateFile
-);
-BOOL CloseHandle(HANDLE hObject);
-]]
 
 --CreateFile access rights flags
 local t = {
@@ -444,9 +350,9 @@ function fs.wrap_handle(h, read_async, write_async, is_pipe_end)
 	return f
 end
 
-cdef[[
-int _fileno(struct FILE *stream);
-HANDLE _get_osfhandle(int fd);
+cdef [[
+	int _fileno(struct FILE *stream);
+	HANDLE _get_osfhandle(int fd);
 ]]
 
 function fs.wrap_fd(fd, ...)
@@ -475,32 +381,6 @@ function file.set_inheritable(file, inheritable)
 end
 
 --pipes ----------------------------------------------------------------------
-
-cdef[[
-BOOL CreatePipe(
-	PHANDLE               hReadPipe,
-	PHANDLE               hWritePipe,
-	LPSECURITY_ATTRIBUTES lpPipeAttributes,
-	DWORD                 nSize
-);
-BOOL SetHandleInformation(
-	HANDLE hObject,
-	DWORD  dwMask,
-	DWORD  dwFlags
-);
-HANDLE CreateNamedPipeW(
-  LPWSTR                lpName,
-  DWORD                 dwOpenMode,
-  DWORD                 dwPipeMode,
-  DWORD                 nMaxInstances,
-  DWORD                 nOutBufferSize,
-  DWORD                 nInBufferSize,
-  DWORD                 nDefaultTimeOut,
-  LPSECURITY_ATTRIBUTES lpSecurityAttributes
-);
-
-DWORD GetCurrentThreadId();
-]]
 
 --NOTE: FILE_FLAG_FIRST_PIPE_INSTANCE == WRITE_OWNER wtf?
 local pipe_flag_bits = update({
@@ -602,9 +482,9 @@ end
 
 --stdio streams --------------------------------------------------------------
 
-cdef[[
-FILE *_fdopen(int fd, const char *mode);
-int _open_osfhandle(HANDLE osfhandle, int flags);
+cdef [[
+	FILE *_fdopen(int fd, const char *mode);
+	int _open_osfhandle(HANDLE osfhandle, int flags);
 ]]
 
 function file.stream(f, mode)
@@ -617,33 +497,6 @@ function file.stream(f, mode)
 end
 
 --i/o ------------------------------------------------------------------------
-
-cdef[[
-BOOL ReadFile(
-	HANDLE       hFile,
-	LPVOID       lpBuffer,
-	DWORD        nNumberOfBytesToRead,
-	LPDWORD      lpNumberOfBytesRead,
-	void*        lpOverlapped
-);
-
-BOOL WriteFile(
-	HANDLE       hFile,
-	LPCVOID      lpBuffer,
-	DWORD        nNumberOfBytesToWrite,
-	LPDWORD      lpNumberOfBytesWritten,
-	void*        lpOverlapped
-);
-
-BOOL FlushFileBuffers(HANDLE hFile);
-
-BOOL SetFilePointerEx(
-	HANDLE         hFile,
-	LARGE_INTEGER  liDistanceToMove,
-	PLARGE_INTEGER lpNewFilePointer,
-	DWORD          dwMoveMethod
-);
-]]
 
 local function read_overlapped(f, o, buf, sz)
 	return C.ReadFile(f.handle, buf, sz, nil, o) ~= 0
@@ -660,6 +513,7 @@ local function mask_eof(ret, err)
 	if err == 'eof' then return 0 end --pipes do that
 	return nil, err
 end
+
 function file.read(f, buf, sz, expires)
 	assert(sz > 0) --because it returns 0 for EOF
 	if f._read_async then
@@ -697,8 +551,6 @@ end
 
 --truncate -------------------------------------------------------------------
 
-cdef'BOOL SetEndOfFile(HANDLE hFile);'
-
 --NOTE: seeking beyond file size and then truncating the file incurs no delay
 --on NTFS, but that's not because the file becomes sparse (it doesn't, and
 --disk space _is_ reserved), but because the extra zero bytes are not written
@@ -712,19 +564,6 @@ function file.truncate(f, size)
 end
 
 --filesystem operations ------------------------------------------------------
-
-cdef[[
-BOOL CreateDirectoryW(LPCWSTR, LPSECURITY_ATTRIBUTES);
-BOOL RemoveDirectoryW(LPCWSTR);
-int SetCurrentDirectoryW(LPCWSTR lpPathName);
-DWORD GetCurrentDirectoryW(DWORD nBufferLength, LPWSTR lpBuffer);
-BOOL DeleteFileW(LPCWSTR lpFileName);
-BOOL MoveFileExW(
-	LPCWSTR lpExistingFileName,
-	LPCWSTR lpNewFileName,
-	DWORD   dwFlags
-);
-]]
 
 function mkdir(path)
 	return checknz(C.CreateDirectoryW(wcs(path), nil))
@@ -775,30 +614,6 @@ function fs.move(oldpath, newpath, opt)
 end
 
 --symlinks & hardlinks -------------------------------------------------------
-
-cdef[[
-BOOL CreateSymbolicLinkW (
-	LPCWSTR lpSymlinkFileName,
-	LPCWSTR lpTargetFileName,
-	DWORD dwFlags
-);
-BOOL CreateHardLinkW(
-	LPCWSTR lpFileName,
-	LPCWSTR lpExistingFileName,
-	LPSECURITY_ATTRIBUTES lpSecurityAttributes
-);
-
-BOOL DeviceIoControl(
-	HANDLE       hDevice,
-	DWORD        dwIoControlCode,
-	LPVOID       lpInBuffer,
-	DWORD        nInBufferSize,
-	LPVOID       lpOutBuffer,
-	DWORD        nOutBufferSize,
-	LPDWORD      lpBytesReturned,
-	void*        lpOverlapped
-);
-]]
 
 local SYMBOLIC_LINK_FLAG_DIRECTORY = 0x1
 
@@ -889,11 +704,6 @@ end
 
 --common paths ---------------------------------------------------------------
 
-cdef[[
-DWORD GetTempPathW(DWORD nBufferLength, LPWSTR lpBuffer);
-DWORD GetModuleFileNameW(HMODULE hModule, LPWSTR lpFilename, DWORD nSize);
-]]
-
 function fs.homedir()
 	return os.getenv'USERPROFILE'
 end
@@ -934,88 +744,6 @@ function fs.exepath()
 end
 
 --file attributes ------------------------------------------------------------
-
-cdef[[
-typedef struct {
-	DWORD dwLowDateTime;
-	DWORD dwHighDateTime;
-} FILETIME;
-
-typedef struct {
-	DWORD    dwFileAttributes;
-	FILETIME ftCreationTime;
-	FILETIME ftLastAccessTime;
-	FILETIME ftLastWriteTime;
-	DWORD    dwVolumeSerialNumber;
-	DWORD    nFileSizeHigh;
-	DWORD    nFileSizeLow;
-	DWORD    nNumberOfLinks;
-	DWORD    nFileIndexHigh;
-	DWORD    nFileIndexLow;
-} BY_HANDLE_FILE_INFORMATION, *LPBY_HANDLE_FILE_INFORMATION;
-
-BOOL GetFileInformationByHandle(
-	HANDLE                       hFile,
-	LPBY_HANDLE_FILE_INFORMATION lpFileInformation
-);
-
-typedef enum {
-	FileBasicInfo                   = 0,
-	FileStandardInfo                = 1,
-	FileNameInfo                    = 2,
-	FileRenameInfo                  = 3,
-	FileDispositionInfo             = 4,
-	FileAllocationInfo              = 5,
-	FileEndOfFileInfo               = 6,
-	FileStreamInfo                  = 7,
-	FileCompressionInfo             = 8,
-	FileAttributeTagInfo            = 9,
-	FileIdBothDirectoryInfo         = 10,
-	FileIdBothDirectoryRestartInfo  = 11,
-	FileIoPriorityHintInfo          = 12,
-	FileRemoteProtocolInfo          = 13,
-	FileFullDirectoryInfo           = 14,
-	FileFullDirectoryRestartInfo    = 15,
-	FileStorageInfo                 = 16,
-	FileAlignmentInfo               = 17,
-	FileIdInfo                      = 18,
-	FileIdExtdDirectoryInfo         = 19,
-	FileIdExtdDirectoryRestartInfo  = 20,
-} FILE_INFO_BY_HANDLE_CLASS;
-
-typedef struct {
-	LARGE_INTEGER CreationTime;
-	LARGE_INTEGER LastAccessTime;
-	LARGE_INTEGER LastWriteTime;
-	LARGE_INTEGER ChangeTime;
-	DWORD         FileAttributes;
-} FILE_BASIC_INFO, *PFILE_BASIC_INFO;
-
-BOOL GetFileInformationByHandleEx(
-	HANDLE                    hFile,
-	FILE_INFO_BY_HANDLE_CLASS FileInformationClass,
-	LPVOID                    lpFileInformation,
-	DWORD                     dwBufferSize
-);
-
-BOOL SetFileInformationByHandle(
-	HANDLE                    hFile,
-	FILE_INFO_BY_HANDLE_CLASS FileInformationClass,
-	LPVOID                    lpFileInformation,
-	DWORD                     dwBufferSize
-);
-
-typedef enum {
-    GetFileExInfoStandard
-} GET_FILEEX_INFO_LEVELS;
-
-DWORD GetFinalPathNameByHandleW(
-	HANDLE hFile,
-	LPWSTR lpszFilePath,
-	DWORD  cchFilePath,
-	DWORD  dwFlags
-);
-]]
 
 --FILETIME stores time in hundred-nanoseconds from `1601-01-01 00:00:00`.
 --timestamp stores the time in seconds from `1970-01-01 00:00:00`.
@@ -1090,7 +818,7 @@ local function file_get_info(f)
 	return info
 end
 
-local file_basic_info_ct = ffi.typeof'FILE_BASIC_INFO'
+local file_basic_info_ct = ffi.typeof'FILE_BASIC_INFORMATION'
 local binfo
 local function file_get_basic_info(f)
 	binfo = binfo or file_basic_info_ct()
@@ -1240,29 +968,6 @@ end
 
 --directory listing ----------------------------------------------------------
 
-cdef[[
-enum {
-	MAX_PATH = 260
-};
-
-typedef struct {
-	DWORD dwFileAttributes;
-	FILETIME ftCreationTime;
-	FILETIME ftLastAccessTime;
-	FILETIME ftLastWriteTime;
-	DWORD nFileSizeHigh;
-	DWORD nFileSizeLow;
-	DWORD dwReserved0; // reparse tag
-	DWORD dwReserved1;
-	WCHAR cFileName[MAX_PATH];
-	WCHAR cAlternateFileName[14];
-} WIN32_FIND_DATAW, *LPWIN32_FIND_DATAW;
-
-HANDLE FindFirstFileW(LPCWSTR, LPWIN32_FIND_DATAW);
-BOOL FindNextFileW(HANDLE, LPWIN32_FIND_DATAW);
-BOOL FindClose(HANDLE);
-]]
-
 dir_ct = ffi.typeof[[
 	struct {
 		HANDLE _handle;
@@ -1364,24 +1069,6 @@ end
 
 --memory mapping -------------------------------------------------------------
 
-ffi.cdef[[
-typedef struct {
-	WORD wProcessorArchitecture;
-	WORD wReserved;
-	DWORD dwPageSize;
-	LPVOID lpMinimumApplicationAddress;
-	LPVOID lpMaximumApplicationAddress;
-	LPDWORD dwActiveProcessorMask;
-	DWORD dwNumberOfProcessors;
-	DWORD dwProcessorType;
-	DWORD dwAllocationGranularity;
-	WORD wProcessorLevel;
-	WORD wProcessorRevision;
-} SYSTEM_INFO, *LPSYSTEM_INFO;
-
-VOID GetSystemInfo(LPSYSTEM_INFO lpSystemInfo);
-]]
-
 local pagesize
 function fs.pagesize()
 	if not pagesize then
@@ -1391,45 +1078,6 @@ function fs.pagesize()
 	end
 	return pagesize
 end
-
-ffi.cdef[[
-HANDLE CreateFileMappingW(
-	HANDLE hFile,
-	LPSECURITY_ATTRIBUTES lpFileMappingAttributes,
-	DWORD flProtect,
-	DWORD dwMaximumSizeHigh,
-	DWORD dwMaximumSizeLow,
-	LPCWSTR lpName
-);
-
-HANDLE OpenFileMappingW(
-	DWORD   dwDesiredAccess,
-	BOOL    bInheritHandle,
-	LPCWSTR lpName
-);
-
-void* MapViewOfFileEx(
-	HANDLE hFileMappingObject,
-	DWORD dwDesiredAccess,
-	DWORD dwFileOffsetHigh,
-	DWORD dwFileOffsetLow,
-	SIZE_T dwNumberOfBytesToMap,
-	LPVOID lpBaseAddress
-);
-
-BOOL UnmapViewOfFile(LPCVOID lpBaseAddress);
-
-BOOL FlushViewOfFile(
-	LPCVOID lpBaseAddress,
-	SIZE_T dwNumberOfBytesToFlush
-);
-
-BOOL VirtualProtect(
-	LPVOID lpAddress,
-	SIZE_T dwSize,
-	DWORD  flNewProtect,
-	PDWORD lpflOldProtect);
-]]
 
 local PAGE_READONLY                = 0x0002
 local PAGE_READWRITE               = 0x0004
